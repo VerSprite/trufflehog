@@ -70,6 +70,13 @@ type detectorTransport struct {
 
 func (t *detectorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.Header.Add("User-Agent", userAgent())
+	if hdr := feature.CustomHeaders.Load(); hdr != nil {
+		for k, vals := range hdr {
+			for _, v := range vals {
+				req.Header.Add(k, v)
+			}
+		}
+	}
 	return t.T.RoundTrip(req)
 }
 

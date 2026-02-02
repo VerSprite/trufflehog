@@ -61,6 +61,7 @@ var (
 	results             = cli.Flag("results", "Specifies which type(s) of results to output: verified (confirmed valid by API), unknown (verification failed due to error), unverified (detected but not verified), filtered_unverified (unverified but would have been filtered out). Defaults to verified,unverified,unknown.").String()
 	noColor             = cli.Flag("no-color", "Disable colorized output").Bool()
 	noColour            = cli.Flag("no-colour", "Alias for --no-color").Hidden().Bool()
+	customHeaders       = cli.Flag("header", "Custom header to add to all outbound HTTP requests; repeatable. Format 'Name: value'.").Strings()
 
 	allowVerificationOverlap   = cli.Flag("allow-verification-overlap", "Allow verification of similar credentials across detectors").Bool()
 	filterUnverified           = cli.Flag("filter-unverified", "Only output first unverified result per chunk per detector if there are more than one results.").Bool()
@@ -462,6 +463,34 @@ func run(state overseer.State) {
 
 	if *userAgentSuffix != "" {
 		feature.UserAgentSuffix.Store(*userAgentSuffix)
+	}
+
+	// Parse and set any custom headers specified via --header
+	if customHeaders != nil && len(*customHeaders) > 0 {
+		hdr := http.Header{}
+		for _, h := range *customHeaders {
+			// Support both 'Key: value' and 'Key=value' just in case
+			var key, val string
+			if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
+				key = strings.TrimSpace(parts[0])
+				val = strings.TrimSpace(parts[1])
+			} else if parts := strings.SplitN(h, "=", 2); len(parts) == 2 {
+				key = strings.TrimSpace(parts[0])
+				val = strings.TrimSpace(parts[1])
+			} else {
+				logger.V(1).Info("skipping invalid --header format; expected 'Name: value'", "header", h)
+				continue
+			}
+			if key == "" || val == "" {
+				logger.V(1).Info("skipping invalid --header with empty key or value", "header", h)
+				continue
+			}
+			hdr.Add(key, val)
+		}
+		if len(hdr) > 0 {
+			feature.CustomHeaders.Store(hdr)
+			logger.V(2).Info("custom headers configured", "count", len(hdr))
+		}
 	}
 
 	// OSS Default APK handling on
