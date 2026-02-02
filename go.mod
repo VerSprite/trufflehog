@@ -288,7 +288,7 @@ require (
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/trufflesecurity/touchfile v0.1.1 // indirect
-	github.com/ulikunitz/xz v0.5.12 // indirect
+	github.com/ulikunitz/xz v0.5.14 // indirect
 	github.com/vbatts/tar-split v0.12.1 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
