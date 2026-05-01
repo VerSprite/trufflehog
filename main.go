@@ -61,7 +61,7 @@ var (
 	results             = cli.Flag("results", "Specifies which type(s) of results to output: verified (confirmed valid by API), unknown (verification failed due to error), unverified (detected but not verified), filtered_unverified (unverified but would have been filtered out). Defaults to verified,unverified,unknown.").String()
 	noColor             = cli.Flag("no-color", "Disable colorized output").Bool()
 	noColour            = cli.Flag("no-colour", "Alias for --no-color").Hidden().Bool()
-	customHeaders       = cli.Flag("header", "Custom header to add to all outbound HTTP requests; repeatable. Format 'Name: value' or 'Name=value'.").Strings()
+	customHeaders       = cli.Flag("header", "Custom HTTP header to add to detector verification requests; repeatable. Format 'Name: value'. Only applies to detectors that use the shared HTTP client (some detectors verify via vendor SDKs that bypass this flag). WARNING: headers are sent to every verification endpoint; do not use this to set credentials scoped to a specific target.").Strings()
 
 	allowVerificationOverlap   = cli.Flag("allow-verification-overlap", "Allow verification of similar credentials across detectors").Bool()
 	filterUnverified           = cli.Flag("filter-unverified", "Only output first unverified result per chunk per detector if there are more than one results.").Bool()
@@ -513,33 +513,20 @@ func run(state overseer.State, logSync func() error) {
 		feature.UserAgentSuffix.Store(*userAgentSuffix)
 	}
 
-	// Parse and set any custom headers specified via --header
-	if customHeaders != nil && len(*customHeaders) > 0 {
-		hdr := http.Header{}
-		for _, h := range *customHeaders {
-			var key, val string
-			colonIdx := strings.Index(h, ":")
-			equalsIdx := strings.Index(h, "=")
-			switch {
-			case colonIdx == -1 && equalsIdx == -1:
-				logger.V(1).Info("skipping invalid --header format; expected 'Name: value' or 'Name=value'", "header", h)
-				continue
-			case colonIdx == -1 || (equalsIdx != -1 && equalsIdx < colonIdx):
-				key = strings.TrimSpace(h[:equalsIdx])
-				val = strings.TrimSpace(h[equalsIdx+1:])
-			default:
-				key = strings.TrimSpace(h[:colonIdx])
-				val = strings.TrimSpace(h[colonIdx+1:])
+	// Parse and set any custom headers specified via --header. Malformed
+	// entries are fatal at startup so misconfiguration cannot silently fail
+	// every outbound request.
+	if len(*customHeaders) > 0 {
+		hdr, errs := common.ParseHeaders(*customHeaders)
+		if len(errs) > 0 {
+			for _, err := range errs {
+				logger.Error(err, "invalid --header")
 			}
-			if key == "" || val == "" {
-				logger.V(1).Info("skipping invalid --header with empty key or value", "header", h)
-				continue
-			}
-			hdr.Add(key, val)
+			logFatal(fmt.Errorf("%d invalid --header value(s)", len(errs)), "refusing to start with malformed custom headers")
 		}
 		if len(hdr) > 0 {
 			feature.CustomHeaders.Store(hdr)
-			logger.V(2).Info("custom headers configured", "count", len(hdr))
+			logger.V(2).Info("custom headers configured", "count", len(*customHeaders))
 		}
 	}
 
