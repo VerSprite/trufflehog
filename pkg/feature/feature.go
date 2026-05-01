@@ -49,10 +49,13 @@ type AtomicHeader struct {
 	value atomic.Value
 }
 
-// Load returns the current http.Header value; may be nil if unset.
+// Load returns a clone of the current http.Header value, or nil if unset.
+// A clone is returned so callers cannot mutate the shared map and race with
+// other readers. http.Header.Clone is cheap for the small (typically 1-3
+// entry) header sets configured via --header.
 func (ah *AtomicHeader) Load() http.Header {
 	if v := ah.value.Load(); v != nil {
-		return v.(http.Header)
+		return v.(http.Header).Clone()
 	}
 	return nil
 }
