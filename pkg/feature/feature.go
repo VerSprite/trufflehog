@@ -1,8 +1,8 @@
 package feature
 
 import (
-	"sync/atomic"
 	"net/http"
+	"sync/atomic"
 )
 
 var (
@@ -16,6 +16,7 @@ var (
 	UseGitMirror                   atomic.Bool
 	GitlabProjectsPerPage          atomic.Int64
 	UseGithubGraphQLAPI            atomic.Bool // use github graphql api to fetch issues, pr's and comments
+	HTMLDecoderEnabled             atomic.Bool
 	CustomHeaders                  AtomicHeader
 )
 

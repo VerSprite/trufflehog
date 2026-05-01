@@ -16,7 +16,7 @@ import (
 	regexp "github.com/wasilibs/go-re2"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detector_typepb"
 )
 
 type Scanner struct{}
@@ -132,8 +132,9 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		}
 
 		s1 := detectors.Result{
-			DetectorType: detectorspb.DetectorType_JWT,
+			DetectorType: detector_typepb.DetectorType_JWT,
 			Raw:          []byte(match),
+			SecretParts:  map[string]string{"key": match},
 			ExtraData:    extraData,
 		}
 
@@ -261,7 +262,8 @@ func verifyJWT(ctx context.Context, client *http.Client, tokenParts []string, pa
 	}
 	matchingKey, found := keySet.LookupKeyID(kid)
 	if !found {
-		return false, fmt.Errorf("no matching JWKS key")
+		// this is a determinate failure indicating rotation
+		return false, nil
 	}
 
 	// Parse matching key to the "raw" key type needed for signature verification
@@ -281,8 +283,8 @@ func verifyJWT(ctx context.Context, client *http.Client, tokenParts []string, pa
 	return true, nil
 }
 
-func (s Scanner) Type() detectorspb.DetectorType {
-	return detectorspb.DetectorType_JWT
+func (s Scanner) Type() detector_typepb.DetectorType {
+	return detector_typepb.DetectorType_JWT
 }
 
 func (s Scanner) Description() string {
