@@ -61,7 +61,7 @@ var (
 	results             = cli.Flag("results", "Specifies which type(s) of results to output: verified (confirmed valid by API), unknown (verification failed due to error), unverified (detected but not verified), filtered_unverified (unverified but would have been filtered out). Defaults to verified,unverified,unknown.").String()
 	noColor             = cli.Flag("no-color", "Disable colorized output").Bool()
 	noColour            = cli.Flag("no-colour", "Alias for --no-color").Hidden().Bool()
-	customHeaders       = cli.Flag("header", "Custom HTTP header to add to detector verification requests; repeatable. Format 'Name: value'. Only applies to detectors that use the shared HTTP client (some detectors verify via vendor SDKs that bypass this flag). WARNING: headers are sent to every verification endpoint; do not use this to set credentials scoped to a specific target.").Strings()
+	customHeaders       = cli.Flag("header", "Custom HTTP header to add to detector verification requests; repeatable. Format 'Name: value'. WARNING: headers are sent to every verification endpoint; do not use this for credentials scoped to a specific target.").Strings()
 
 	allowVerificationOverlap   = cli.Flag("allow-verification-overlap", "Allow verification of similar credentials across detectors").Bool()
 	filterUnverified           = cli.Flag("filter-unverified", "Only output first unverified result per chunk per detector if there are more than one results.").Bool()
@@ -527,6 +527,16 @@ func run(state overseer.State, logSync func() error) {
 		if len(hdr) > 0 {
 			feature.CustomHeaders.Store(hdr)
 			logger.V(2).Info("custom headers configured", "count", len(*customHeaders))
+			// Wrap http.DefaultTransport so any detector using http.DefaultClient
+			// or a transport-less http.Client picks up --header automatically.
+			// This is the architectural fix that avoids per-detector edits: any
+			// HTTP path that falls through to the stdlib default — including
+			// x/oauth2 token sources whose Base is nil — now goes through
+			// CustomTransport. Done only when --header is set so no-flag users
+			// see no behavior change. SDK clients that build their own complete
+			// transport stack (notably aws-sdk-go-v2) bypass this and require
+			// SDK-level injection; see common/aws_middleware.go.
+			http.DefaultTransport = common.NewCustomTransport(http.DefaultTransport)
 		}
 	}
 
