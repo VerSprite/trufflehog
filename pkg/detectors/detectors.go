@@ -49,7 +49,7 @@ type Detector interface {
 type CustomResultsCleaner interface {
 	// CleanResults removes "superfluous" results from a result set (where the definition of "superfluous" is detector-
 	// specific).
-	CleanResults(results []Result) []Result
+	CleanResults(results []Result, verificationEnabled bool) []Result
 	// ShouldCleanResultsIrrespectiveOfConfiguration allows a custom cleaner to instruct the engine to ignore
 	// user-provided configuration that controls whether results are cleaned. (User-provided configuration is not the
 	// only factor that determines whether the engine runs cleaning logic.)
@@ -134,6 +134,11 @@ type Result struct {
 		Value string
 		Line  int64
 	}
+
+	// chunkOffset stores the byte position of this result's secret within chunk data.
+	// Used to disambiguate line numbers when the same secret appears multiple times.
+	chunkOffset    int64
+	chunkOffsetSet bool
 }
 
 // CopyVerificationInfo clones verification info (status and error) from another Result struct. This is used when
@@ -174,6 +179,33 @@ func (r *Result) SetPrimarySecretLine(line int64) {
 // GetPrimarySecretValue return primary secret match value
 func (r *Result) GetPrimarySecretValue() string {
 	return r.primarySecret.Value
+}
+
+// ClearSecrets removes fields that may contain raw secret material.
+func (r *Result) ClearSecrets() {
+	r.Raw = nil
+	r.RawV2 = nil
+	r.SecretParts = nil
+	r.primarySecret = struct {
+		Value string
+		Line  int64
+	}{}
+}
+
+// SetChunkOffset records the byte position of this result's secret within the chunk data.
+func (r *Result) SetChunkOffset(offset int64) {
+	r.chunkOffset = offset
+	r.chunkOffsetSet = true
+}
+
+// ChunkOffset returns the byte position of this result's secret within the chunk data.
+func (r *Result) ChunkOffset() int64 {
+	return r.chunkOffset
+}
+
+// HasChunkOffset reports whether a chunk offset has been explicitly set on this result.
+func (r *Result) HasChunkOffset() bool {
+	return r.chunkOffsetSet
 }
 
 // redactSecrets replaces all instances of the given secrets with [REDACTED] in the error message.
@@ -248,7 +280,7 @@ func CopyMetadata(chunk *sources.Chunk, result Result) ResultWithMetadata {
 
 // CleanResults returns all verified secrets, and if there are no verified secrets,
 // just one unverified secret if there are any.
-func CleanResults(results []Result) []Result {
+func CleanResults(results []Result, _ bool) []Result {
 	if len(results) == 0 {
 		return results
 	}
@@ -353,4 +385,11 @@ func withDedupKey(ctx context.Context, detType detector_typepb.DetectorType, cre
 // with NewClientWithDedup or WithDedup — it is the only way to activate deduplication.
 func DoWithDedup(client *http.Client, detType detector_typepb.DetectorType, credential string, req *http.Request) (*http.Response, error) {
 	return client.Do(req.WithContext(withDedupKey(req.Context(), detType, credential)))
+}
+
+// ResultVerifier is an optional interface that a detector can implement to verify a single
+// previously-extracted result independently of the chunk it came from, which lets the
+// verification cache verify only cache misses instead of re-verifying an entire chunk.
+type ResultVerifier interface {
+	VerifyResult(ctx context.Context, result *Result)
 }

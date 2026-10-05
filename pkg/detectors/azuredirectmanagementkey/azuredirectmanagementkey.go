@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -37,7 +38,7 @@ var (
 	keyPat        = regexp.MustCompile(detectors.PrefixRegex([]string{"azure", ".management.azure-api.net"}) + `([a-zA-Z0-9+\/]{83,85}[a-zA-Z0-9]==)`) // pattern for both Primary and secondary key
 
 	invalidHosts  = simple.NewCache[struct{}]()
-	noSuchHostErr = errors.New("no such host")
+	errNoSuchHost = errors.New("no such host")
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
@@ -60,7 +61,6 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		keyMatchesUnique[strings.TrimSpace(keyMatch[1])] = struct{}{}
 	}
 
-EndpointLoop:
 	for baseUrl, serviceName := range urlMatchesUnique {
 		for key := range keyMatchesUnique {
 			s1 := detectors.Result{
@@ -75,23 +75,27 @@ EndpointLoop:
 
 			if verify {
 				if invalidHosts.Exists(baseUrl) {
-					logger.V(3).Info("Skipping invalid registry", "baseUrl", baseUrl)
-					continue EndpointLoop
-				}
-
-				client := s.client
-				if client == nil {
-					client = defaultClient
-				}
-
-				isVerified, verificationErr := s.verifyMatch(ctx, client, baseUrl, serviceName, key)
-				s1.Verified = isVerified
-				if verificationErr != nil {
-					if errors.Is(verificationErr, noSuchHostErr) {
-						invalidHosts.Set(baseUrl, struct{}{})
-						continue EndpointLoop
+					// An earlier candidate already proved this host does not resolve, so the lookup is
+					// skipped. The finding is still reported: dropping it here would make the reported
+					// secrets depend on whether verification was requested, and on the order in which
+					// candidates happened to be processed.
+					logger.V(3).Info("Skipping verification: no such host", "baseUrl", baseUrl)
+					s1.SetVerificationError(errNoSuchHost, baseUrl)
+				} else {
+					client := s.client
+					if client == nil {
+						client = defaultClient
 					}
-					s1.SetVerificationError(verificationErr, baseUrl)
+
+					isVerified, verificationErr := s.verifyMatch(ctx, client, baseUrl, serviceName, key)
+					s1.Verified = isVerified
+					if verificationErr != nil {
+						var dnsErr *net.DNSError
+						if errors.As(verificationErr, &dnsErr) && dnsErr.IsNotFound {
+							invalidHosts.Set(baseUrl, struct{}{})
+						}
+						s1.SetVerificationError(verificationErr, baseUrl)
+					}
 				}
 			}
 
@@ -131,9 +135,11 @@ func (s Scanner) verifyMatch(ctx context.Context, client *http.Client, baseUrl, 
 	req.Header.Set("Authorization", fmt.Sprintf("SharedAccessSignature %s", accessToken))
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, nil
+		// A transport failure means the credential was never tested, so the result is
+		// indeterminate. Returning (false, nil) here would report it as a rejection.
+		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK:

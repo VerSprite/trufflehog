@@ -29,8 +29,11 @@ var (
 	// accountIdentifierPat matches Snowflake account identifiers in the format: XXXXXXX-XXXXX
 	// Example: ABC1234-EXAMPLE
 	accountIdentifierPat = regexp.MustCompile(detectors.PrefixRegex([]string{"account"}) + `\b([a-zA-Z]{7}-[0-9a-zA-Z-_]{1,255}(.privatelink)?)\b`)
-	// usernameExclusionPat defines characters that should not be present in usernames
-	usernameExclusionPat = `!@#$%^&*{}:<>,.;?()/\+=\s\n`
+
+	// exclude characters that should not be present in usernames
+	usernameRegexState = common.UsernameRegexCheck(`!@#$%^&*{}:<>,.;?()/\+=\s\n`)
+
+	passwordRegexState = common.PasswordRegexCheck(" \r\n") // Exclude spaces, carriage returns, and line feeds
 )
 
 const (
@@ -100,13 +103,11 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		return nil, nil
 	}
 
-	usernameRegexState := common.UsernameRegexCheck(usernameExclusionPat)
 	usernameMatches := usernameRegexState.Matches(data)
 	if len(usernameMatches) == 0 {
 		return nil, nil
 	}
 
-	passwordRegexState := common.PasswordRegexCheck(" \r\n") // Exclude spaces, carriage returns, and line feeds
 	passwordMatches := passwordRegexState.Matches(data)
 	if len(passwordMatches) == 0 {
 		return nil, nil
@@ -173,7 +174,7 @@ func verifyMatch(ctx context.Context, account, username, password string) (bool,
 	if err != nil {
 		return false, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

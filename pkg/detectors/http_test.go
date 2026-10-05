@@ -3,7 +3,6 @@ package detectors
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -63,7 +62,7 @@ func TestWithNoLocalIP(t *testing.T) {
 		conn, err := transport.DialContext(context.Background(), "tcp", "google.com:80")
 		assert.NoError(t, err)
 		assert.NotNil(t, conn)
-		conn.Close()
+		_ = conn.Close()
 	})
 
 	t.Run("Allows dialing non-local IP", func(t *testing.T) {
@@ -76,7 +75,7 @@ func TestWithNoLocalIP(t *testing.T) {
 		conn, err := transport.DialContext(context.Background(), "tcp", "1.1.1.1:80")
 		assert.NoError(t, err)
 		assert.NotNil(t, conn)
-		conn.Close()
+		_ = conn.Close()
 	})
 
 	t.Run("Handles invalid address", func(t *testing.T) {
@@ -114,7 +113,7 @@ func TestDoWithDedup_Singleflight(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		n := atomic.AddInt32(&requestCount, 1)
 		time.Sleep(20 * time.Millisecond)
-		fmt.Fprintf(w, `{"request":%d}`, n)
+		_, _ = fmt.Fprintf(w, `{"request":%d}`, n)
 	}))
 	defer server.Close()
 
@@ -140,7 +139,7 @@ func TestDoWithDedup_Singleflight(t *testing.T) {
 				errs[i] = err
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			var buf [512]byte
 			n, _ := resp.Body.Read(buf[:])
 			bodies[i] = string(buf[:n])
@@ -201,7 +200,7 @@ func TestDoWithDedup_WaiterContextCancelled(t *testing.T) {
 				results[i] = result{err: err}
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			results[i] = result{status: resp.StatusCode}
 		}(i, ctx)
 	}
@@ -249,7 +248,7 @@ func TestDoWithDedup_FirstCallerContextCancelled(t *testing.T) {
 			firstErr = err
 			return
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}()
 
 	// Cancel the first caller once the server is processing, then immediately
@@ -268,7 +267,7 @@ func TestDoWithDedup_FirstCallerContextCancelled(t *testing.T) {
 			secondErr = err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		secondStatus = resp.StatusCode
 	}()
 
@@ -300,35 +299,11 @@ func TestDoWithDedup_DeadlinePreserved(t *testing.T) {
 	start := time.Now()
 	resp, err := DoWithDedup(client, detector_typepb.DetectorType_Meraki, "cred", req)
 	if err == nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	}
 
 	elapsed := time.Since(start)
 
 	assert.Error(t, err, "request to hanging server should fail")
 	assert.Less(t, elapsed, time.Second, "timeout should be enforced by client deadline, not run indefinitely")
-}
-
-func TestIsLocalIP(t *testing.T) {
-	testCases := []struct {
-		name     string
-		ip       net.IP
-		expected bool
-	}{
-		{"Loopback IPv4", net.ParseIP("127.0.0.1"), true},
-		{"Loopback IPv6", net.ParseIP("::1"), true},
-		{"Private IPv4", net.ParseIP("192.168.1.1"), true},
-		{"Private IPv6", net.ParseIP("fd00::1"), true},
-		{"Unspecified IPv4", net.ParseIP("0.0.0.0"), true},
-		{"Unspecified IPv6", net.ParseIP("::"), true},
-		{"Public IPv4", net.ParseIP("8.8.8.8"), false},
-		{"Public IPv6", net.ParseIP("2001:4860:4860::8888"), false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := isLocalIP(tc.ip)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
 }

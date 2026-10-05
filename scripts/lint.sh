@@ -2,10 +2,9 @@
 set -euo pipefail
 
 # NOTE: Version and args must match .github/workflows/lint.yml
-GOLANGCI_LINT_VERSION="v2.11.4"
+GOLANGCI_LINT_VERSION="v2.13.2"
 
-# TODO: Re-enable errcheck and staticcheck once pre-existing issues are resolved.
-LINT_ARGS="--disable errcheck,staticcheck --enable bodyclose,copyloopvar,misspell --timeout 10m"
+LINT_ARGS="--enable bodyclose,copyloopvar,misspell --timeout 10m"
 
 GOBIN="$(go env GOPATH)/bin"
 GOLANGCI_LINT="${GOBIN}/golangci-lint"
