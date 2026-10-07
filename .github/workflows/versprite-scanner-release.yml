@@ -1,0 +1,83 @@
+name: VerSprite scanner release
+
+# Builds the scanner once for one pinned commit and attaches it to a release.
+# The appsec-workflows scan downloads it and checks it against a checksum pinned
+# there, instead of every repo building it for itself (about 5 minutes).
+#
+# The tag is scanner-<first 12 characters of the commit>. It doesn't start with
+# "v", so upstream's release.yml (DockerHub, goreleaser) never runs for it.
+# A release is never replaced: callers pin its checksum, so a new build gets a
+# new commit and a new tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full 40 character commit SHA to build
+        required: true
+
+permissions: {}
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      COMMIT: ${{ inputs.commit }}
+    steps:
+      - name: Check the commit
+        run: |
+          if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::commit must be a full 40 character SHA, got '$COMMIT'"
+            exit 1
+          fi
+          echo "TAG=scanner-${COMMIT:0:12}" >> "$GITHUB_ENV"
+
+      - name: Stop if this release already exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists. Releases are never replaced, callers pin their checksums."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build
+        run: |
+          mkdir dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X github.com/trufflesecurity/trufflehog/v3/pkg/version.BuildVersion=$TAG" \
+              -o "dist/trufflehog-linux-$arch" .
+          done
+          dist/trufflehog-linux-amd64 --version
+          (cd dist && sha256sum trufflehog-linux-* > SHA256SUMS)
+          {
+            echo "### $TAG"
+            echo "Pin these in appsec-workflows, actions/trufflehog-scan/action.yml:"
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" \
+            --target "$COMMIT" --latest=false \
+            --title "Scanner build $TAG" \
+            --notes "Linux scanner builds of $COMMIT for the appsec-workflows secret scan. Checksums are in SHA256SUMS."
