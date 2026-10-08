@@ -3,9 +3,10 @@ package detectors_test
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
+
+	regexp "github.com/wasilibs/go-re2"
 )
 
 // bypassPatterns are stdlib HTTP entry points that bypass the shared

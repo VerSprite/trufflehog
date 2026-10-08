@@ -5,6 +5,7 @@ import (
 	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -103,7 +104,7 @@ func verifyBearerToken(ctx context.Context, client *http.Client, token string) (
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 	res, err := client.Do(req)
 	if err == nil {
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		switch res.StatusCode {
 		case http.StatusOK, http.StatusForbidden:
 			// 403 indicates lack of permission, but valid token (could be due to twitter free tier)
@@ -132,7 +133,7 @@ func fetchBearerToken(ctx context.Context, client *http.Client, key, secret stri
 	if err != nil {
 		return "", err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	switch res.StatusCode {
 	case http.StatusOK:
@@ -142,6 +143,13 @@ func fetchBearerToken(ctx context.Context, client *http.Client, key, secret stri
 		}
 		return token.AccessToken, nil
 	default:
+		body, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			return "", fmt.Errorf("unexpected HTTP response status %d; failed to read response body: %w", res.StatusCode, readErr)
+		}
+		if len(body) > 0 {
+			return "", fmt.Errorf("unexpected HTTP response status %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+		}
 		return "", fmt.Errorf("unexpected HTTP response status %d", res.StatusCode)
 	}
 }

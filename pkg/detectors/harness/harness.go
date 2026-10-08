@@ -32,7 +32,7 @@ var _ detectors.Detector = (*Scanner)(nil)
 var (
 	defaultClient = common.SaneHttpClient()
 
-	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"harness"}) + `\b(pat\.[A-Za-z0-9]{22}\.[0-9a-f]{24}\.[A-Za-z0-9]{20})\b`)
+	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"harness"}) + `\b(pat\.[A-Za-z0-9_]{22}\.[0-9a-f]{24}\.[A-Za-z0-9]{20})\b`)
 )
 
 func (s Scanner) getClient() *http.Client {
@@ -63,6 +63,7 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		s1 := detectors.Result{
 			DetectorType: detector_typepb.DetectorType_Harness,
 			Raw:          []byte(match),
+			SecretParts:  map[string]string{"key": match},
 		}
 
 		if verify {
@@ -72,13 +73,6 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 			s1.Verified = isVerified
 			s1.ExtraData = extraData
 			s1.SetVerificationError(verificationErr, match)
-
-			if isVerified {
-				s1.SecretParts = map[string]string{
-					"key": match,
-				}
-			}
-
 		}
 
 		results = append(results, s1)

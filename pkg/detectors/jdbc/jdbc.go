@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"regexp"
+	"regexp" //nolint:depguard // used instead of github.com/wasilibs/go-re2 due to differences in utf-8 handling
 	"strings"
 	"time"
 
@@ -16,12 +16,12 @@ import (
 
 type Scanner struct {
 	detectors.DefaultMultiPartCredentialProvider
-	ignorePatterns []regexp.Regexp
+	ignorePatterns []*regexp.Regexp
 }
 
 func New(opts ...func(*Scanner)) *Scanner {
 	scanner := &Scanner{
-		ignorePatterns: []regexp.Regexp{},
+		ignorePatterns: []*regexp.Regexp{},
 	}
 	for _, opt := range opts {
 		opt(scanner)
@@ -32,13 +32,13 @@ func New(opts ...func(*Scanner)) *Scanner {
 
 func WithIgnorePattern(ignoreStrings []string) func(*Scanner) {
 	return func(s *Scanner) {
-		var ignorePatterns []regexp.Regexp
+		var ignorePatterns []*regexp.Regexp
 		for _, ignoreString := range ignoreStrings {
 			ignorePattern, err := regexp.Compile(ignoreString)
 			if err != nil {
 				panic(fmt.Sprintf("%s is not a valid regex, error received: %v", ignoreString, err))
 			}
-			ignorePatterns = append(ignorePatterns, *ignorePattern)
+			ignorePatterns = append(ignorePatterns, ignorePattern)
 		}
 
 		s.ignorePatterns = ignorePatterns
@@ -83,29 +83,45 @@ matchLoop:
 			DetectorType: detector_typepb.DetectorType_JDBC,
 			Raw:          []byte(jdbcConn),
 			Redacted:     tryRedactAnonymousJDBC(jdbcConn),
+			SecretParts:  map[string]string{"connection_string": jdbcConn},
 		}
 
-		if verify {
-			j, err := NewJDBC(logCtx, jdbcConn)
-			if err != nil {
-				continue
+		// Try to parse connection info for ExtraData regardless of verification.
+		if j, parseErr := NewJDBC(logCtx, jdbcConn); parseErr == nil {
+			if info := j.GetConnectionInfo(); info != nil {
+				extraData := make(map[string]string)
+				if info.Host != "" {
+					extraData["host"] = info.Host
+				}
+				if info.User != "" {
+					extraData["username"] = info.User
+				}
+				if info.Database != "" {
+					extraData["database"] = info.Database
+				}
+				if len(extraData) > 0 {
+					result.ExtraData = extraData
+				}
 			}
 
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			pingRes := j.ping(ctx)
-			result.Verified = pingRes.err == nil
-			// If there's a ping error that is marked as "determinate" we throw it away. We do this because this was the
-			// behavior before tri-state verification was introduced and preserving it allows us to gradually migrate
-			// detectors to use tri-state verification.
-			if pingRes.err != nil && !pingRes.determinate {
-				err = pingRes.err
-				result.SetVerificationError(err, jdbcConn)
+			if verify {
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				pingRes := j.ping(ctx)
+				result.Verified = pingRes.err == nil
+				// If there's a ping error that is marked as "determinate" we throw it away. We do this because this was the
+				// behavior before tri-state verification was introduced and preserving it allows us to gradually migrate
+				// detectors to use tri-state verification.
+				if pingRes.err != nil && !pingRes.determinate {
+					result.SetVerificationError(pingRes.err, jdbcConn)
+				}
 			}
-			result.SecretParts = map[string]string{
-				"connection_string": jdbcConn,
-			}
-			// TODO: specialized redaction
+		} else if verify {
+			// The connection string could not be parsed, so the credential was never tested.
+			// That is an indeterminate outcome, not a rejection: we report it as unverified carrying the parse error.
+			// Dropping it here made the reported findings depend on whether verification was requested,
+			// since the unparseable match is kept when verify is false.
+			result.SetVerificationError(parseErr, jdbcConn)
 		}
 
 		results = append(results, result)
@@ -252,7 +268,7 @@ func pingErr(ctx context.Context, driverName, conn string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.PingContext(ctx); err != nil {
 		return err
