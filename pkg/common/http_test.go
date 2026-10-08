@@ -95,10 +95,10 @@ func TestCustomTransportSendsCustomHeaders(t *testing.T) {
 	resetCustomHeaders(t)
 
 	feature.CustomHeaders.Store(http.Header{
-		"X-Scanner-Id":      []string{"test-scanner"},
-		"X-Multi":           []string{"one", "two"},
-		"User-Agent":        []string{"OverrideUA"},
-		"X-Empty-Value":     []string{""},
+		"X-Scanner-Id":  []string{"test-scanner"},
+		"X-Multi":       []string{"one", "two"},
+		"User-Agent":    []string{"OverrideUA"},
+		"X-Empty-Value": []string{""},
 	})
 
 	var captured http.Header
@@ -114,7 +114,7 @@ func TestCustomTransportSendsCustomHeaders(t *testing.T) {
 	}
 	resp, err := client.Get(server.URL)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, "test-scanner", captured.Get("X-Scanner-Id"))
 	assert.Equal(t, []string{"one", "two"}, captured.Values("X-Multi"))
